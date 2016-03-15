@@ -126,7 +126,7 @@ double speed_PID(void)
 // ======================== NAVIGATION =============================
 
 // interrupt for beginning of burst
-CY_ISR(burst_inter)
+CY_ISR(line_inter)
 { 
     int nav_period = 65536;
     
@@ -152,9 +152,10 @@ CY_ISR(burst_inter)
 }
 
 // interrupt for beginning of line
-CY_ISR(line_inter)
+CY_ISR(burst_inter)
 {
-
+    // LCD_Position(1,0);
+    // LCD_PrintString(" BURST ");
 }
 
 // interrupt for black line detection
@@ -208,6 +209,10 @@ CY_ISR(frame_inter)
     else frame_counter++;
     
     servoVal = nav_PID();
+    
+    /*LCD_Position(1,0);
+    sprintf(timeString, "BALLER: %d", frame_counter);
+    LCD_PrintString(timeString); */
     
     // boundary conditions for servo
     if (servoVal > 0.47)
