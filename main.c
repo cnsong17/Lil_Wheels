@@ -23,7 +23,7 @@ const double Kp = 2.8; // proportional constant 0.1, 1.65
 const double Ki = 1.1; // integral constant 0.05 , 0.5
 const double Kd = 0.1; // derivative constant 0.01 , 0.01
 double currErr = 0; // the error term
-double TargetSpeed = 121.92 * (3/4); // Target speed
+double TargetSpeed = 121.92;// * (3/4); // Target speed
 double prevErr = 0; // previous error
 double windupGuard = 0; // integral windup guard
 double pwm = 70; // the PID gain for the PWM
@@ -43,9 +43,10 @@ double AvgTimeDiff; // average delta t
 double diff; // for testing
 double cam_testCurr = 0; // for testing
 double cam_testPrev = 0; // for testing
-const double Kp_nav = 0.01; // proportional constant 0.1, 1.65
-const double Ki_nav = 0.0; // integral constant 0.05 , 0.5
-const double Kd_nav = 0.0; // derivative constant 0.01 , 0.01
+const double Kp_nav = 0.01; // proportional constant 0.01
+const double Ki_nav = 0.0; // integral constant
+const double Kd_nav = 0.0; // derivative constant
+int lineFlag = 0; // determines if a black line has been found already for a given line
 
 double nav_PID(void); 
 
@@ -126,7 +127,7 @@ double speed_PID(void)
 // ======================== NAVIGATION =============================
 
 // interrupt for beginning of burst
-CY_ISR(line_inter)
+CY_ISR(burst_inter)
 { 
     int nav_period = 65536;
     
@@ -134,9 +135,10 @@ CY_ISR(line_inter)
     if (line_counter == modLine)
     {
         // start comparator (DAC reference)
-        Cam_Comparator_Start();
+        //Cam_Comparator_1_Start();
     
         cam_prevTime = Nav_Timer_ReadCounter();
+        lineFlag = 1;
         
         /*cam_testCurr = Nav_Timer_ReadCounter();
         if (cam_testPrev < cam_testCurr) // overflow of the timer period has occured
@@ -152,7 +154,7 @@ CY_ISR(line_inter)
 }
 
 // interrupt for beginning of line
-CY_ISR(burst_inter)
+CY_ISR(line_inter)
 {
     // LCD_Position(1,0);
     // LCD_PrintString(" BURST ");
@@ -162,14 +164,23 @@ CY_ISR(burst_inter)
 CY_ISR(cam_inter)
 {
     int nav_period = 65536;
+    double timeDiffOld = timeDiff;
  
-    cam_currTime = Nav_Timer_ReadCounter();
-    
-    if (cam_prevTime < cam_currTime) // overflow of the timer period has occured
-        timeDiff = (cam_prevTime + (nav_period - cam_currTime));
-    
-    else timeDiff = (cam_prevTime - cam_currTime);
-    
+    // check to make sure this is the first black line found for the frame
+    if (lineFlag == 1)
+    {
+        cam_currTime = Nav_Timer_ReadCounter();
+        lineFlag = 0;
+        
+        if (cam_prevTime < cam_currTime) // overflow of the timer period has occured
+            timeDiff = cam_prevTime + (nav_period - cam_currTime);
+        
+        else timeDiff = (cam_prevTime - cam_currTime);
+        
+        // check for randomness
+        if (timeDiff > 254 || timeDiff < 0) 
+            timeDiff = timeDiffOld;
+    }
     /*
       cam_testCurr = Nav_Timer_ReadCounter();
         if (cam_testPrev < cam_testCurr) // overflow of the timer period has occured
@@ -180,7 +191,7 @@ CY_ISR(cam_inter)
     */    
     
     // stop comparator (DAC reference)
-    Cam_Comparator_Stop();
+    //Cam_Comparator_1_Stop();
 
 }
 
@@ -234,7 +245,7 @@ double nav_PID(void)
     double intErr_nav;
     double prevErr_nav;
     
-    double targetTime = 330.0; // when the black line is centered in the frame ------------------------------------------------
+    double targetTime = 127.0; // when the black line is centered in the frame ------------------------------------------------ 330.0
     
     
     // the error term
@@ -292,10 +303,12 @@ void main()
     Nav_Timer_Start();
         
     // start DAC
-    Comp_Ref_DAC_Start();
+    Comp_Ref_DAC_1_Start();
+    //Comp_Ref_DAC_2_Start();
     
     // start comparator (DAC reference)
-    //Cam_Comparator_Start();
+    Cam_Comparator_1_Start();
+    //Cam_Comparator_2_Start();
     
     //start interrupts for frame, line, and burst
     Cam_Line_Inter_Start();
