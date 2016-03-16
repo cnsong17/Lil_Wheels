@@ -23,11 +23,15 @@ const double Kp = 2.8; // proportional constant 0.1, 1.65
 const double Ki = 1.1; // integral constant 0.05 , 0.5
 const double Kd = 0.1; // derivative constant 0.01 , 0.01
 double currErr = 0; // the error term
-double TargetSpeed = 121.92;// * (3/4); // Target speed
+double MaxSpeed = 121.92; // max operating speed 91.44
+double MinSpeed = 61; // min operating speed 61
+double TargetSpeed = 121.92; //121.92 * (3/4); // Target speed 91.44, 61
 double prevErr = 0; // previous error
 double windupGuard = 0; // integral windup guard
 double pwm = 70; // the PID gain for the PWM
 double intErr; // integral error
+double totalDist = 3048; // total distance 100 feet = 3048 cm
+double distTravelled = 0; // distance travelled so far
 
 double speed_PID(void);
 
@@ -39,14 +43,15 @@ int modLine = 20; // read once every 10 lines
 double cam_prevTime = 0; // start time @ line read
 double cam_currTime = 0; // stop time @ black line detected
 double timeDiff = 0; // delta t
-double AvgTimeDiff; // average delta t
+double AvgTimeDiff = 0; // average delta t
 double diff; // for testing
 double cam_testCurr = 0; // for testing
 double cam_testPrev = 0; // for testing
-const double Kp_nav = 0.01; // proportional constant 0.01
-const double Ki_nav = 0.0; // integral constant
-const double Kd_nav = 0.0; // derivative constant
+const double Kp_nav = 0.001; // proportional constant 0.001
+const double Ki_nav = 0.01; // integral constant 0.0 or 0.01
+const double Kd_nav = 0.0; // derivative constant 0.01 or 0.0
 int lineFlag = 0; // determines if a black line has been found already for a given line
+int index; //keeps track of the index in the moving average window
 
 double nav_PID(void); 
 
@@ -58,6 +63,8 @@ CY_ISR(inter)
     double currTime; // current timer time
     char speed[17]; // speed string
     char pwmString[17]; // pwm string
+    
+    distTravelled += distPerRev; // update distance travelled - to stop after 1 lap
  
     currTime = SpeedControl_Timer_ReadCounter(); //read timer (timer counts down)
     if(prevTime < currTime) // overflow of the timer period has occured
@@ -78,6 +85,11 @@ CY_ISR(inter)
     pwm = speed_PID();
     if(pwm > 999) pwm = 999;
     if(pwm < 0) pwm = 0;
+    
+    // stop the car after 1 lap
+    if (distTravelled > totalDist)
+        pwm = 0;
+        
     Speed_PWM_WriteCompare(pwm); 
     
     if (mag_counter == 6) 
@@ -134,9 +146,6 @@ CY_ISR(burst_inter)
     // every modLine lines, read the comparator
     if (line_counter == modLine)
     {
-        // start comparator (DAC reference)
-        //Cam_Comparator_1_Start();
-    
         cam_prevTime = Nav_Timer_ReadCounter();
         lineFlag = 1;
         
@@ -178,7 +187,7 @@ CY_ISR(cam_inter)
         else timeDiff = (cam_prevTime - cam_currTime);
         
         // check for randomness
-        if (timeDiff > 254 || timeDiff < 0) 
+        if (timeDiff > 165 || timeDiff < 85) 
             timeDiff = timeDiffOld;
     }
     /*
@@ -189,9 +198,6 @@ CY_ISR(cam_inter)
         else diff = (cam_testPrev - cam_testCurr);
             cam_testPrev = cam_testCurr;
     */    
-    
-    // stop comparator (DAC reference)
-    //Cam_Comparator_1_Stop();
 
 }
 
@@ -201,13 +207,21 @@ CY_ISR(frame_inter)
     char timeString[17];
     double servoVal;
     int AvgWindow = 3; // avg every three frames
-       
-    // take moving average
-    if (AvgTimeDiff == 0)
-        AvgTimeDiff = timeDiff;
-        
-    AvgTimeDiff *= (AvgWindow - 1)/AvgWindow;
-    AvgTimeDiff += timeDiff/AvgWindow;
+    //double AvgVals[3];
+    double lastVal;  
+    
+    // moving average
+    /*lastVal = AvgVals[index];
+    AvgVals[index] = timeDiff;
+    
+    // increment pointer
+    if (index == AvgWindow - 1)
+       index = 0;
+    else index++;
+    
+    AvgTimeDiff -= lastVal/AvgWindow;
+    AvgTimeDiff += timeDiff/AvgWindow;*/
+
         
     if (frame_counter == 32)
     {       
@@ -221,9 +235,19 @@ CY_ISR(frame_inter)
     
     servoVal = nav_PID();
     
-    /*LCD_Position(1,0);
-    sprintf(timeString, "BALLER: %d", frame_counter);
-    LCD_PrintString(timeString); */
+    // slow down on turns
+    if (servoVal > 0.2 || servoVal < -0.2)
+    {
+        if (TargetSpeed > MinSpeed)
+            TargetSpeed *= 0.975; 
+        else TargetSpeed = MinSpeed;
+    }
+    else 
+    {
+        if (TargetSpeed < MaxSpeed)
+            TargetSpeed *= 1.01; 
+        else TargetSpeed = MaxSpeed;
+    }
     
     // boundary conditions for servo
     if (servoVal > 0.47)
@@ -231,7 +255,7 @@ CY_ISR(frame_inter)
     if (servoVal < -0.43)
         servoVal = -0.43;
     
-    Steering_PWM_WriteCompare((1.52 - servoVal)*100);
+    Steering_PWM_WriteCompare((1.52 - servoVal)*4800);
 }
 
 // PID controller for nav control
@@ -245,8 +269,9 @@ double nav_PID(void)
     double intErr_nav;
     double prevErr_nav;
     
-    double targetTime = 127.0; // when the black line is centered in the frame ------------------------------------------------ 330.0
+    double targetTime = 127.0; // when the black line is centered in the frame ----------------------------------- 330.0
     
+    //timeDiff = AvgTimeDiff;
     
     // the error term
     currErr_nav = targetTime - timeDiff; 
@@ -324,7 +349,7 @@ void main()
     
     // start steering_PWM
     Steering_PWM_Start();
-    Steering_PWM_WriteCompare(152);
+    Steering_PWM_WriteCompare(7296);
     
     
     for(;;)
