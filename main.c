@@ -40,7 +40,7 @@ double speed_PID(void);
 int line_counter = 0; // line counter
 int frame_counter = 0; // frame counter
 int sampleLine_1 = 20; // read the 20th line of the frame
-int sampleLine_2 = 180; // read the 200th line of the frame 
+int sampleLine_2 = 220; // read the 200th line of the frame 
 double cam_prevTime_1 = 0; // start time @ line read
 double cam_currTime_1 = 0; // stop time @ black line detected
 double timeDiff_1 = 0; // delta t 1
@@ -53,10 +53,11 @@ double diff; // for testing
 double cam_testCurr = 0; // for testing
 double cam_testPrev = 0; // for testing
 const double Kp_nav = 0.01; // proportional constant 0.001
-const double Ki_nav = 0.01; // integral constant 0.0 or 0.01
-const double Kd_nav = 0.01; // derivative constant 0.01 or 0.0
+const double Ki_nav = 0.0; // integral constant 0.0 or 0.01
+const double Kd_nav = 0.0; // derivative constant 0.01 or 0.0
 int lineFlag = 0; // determines if a black line has been found already for a given line
 int index; //keeps track of the index in the moving average window
+int nav_period;
 
 double nav_PID(void); 
 
@@ -170,20 +171,18 @@ CY_ISR(burst_inter)
         lineFlag = 2;
     }
     
-    line_counter++; 
+    
 }
 
 // interrupt for beginning of line
 CY_ISR(line_inter)
 {
-    // LCD_Position(1,0);
-    // LCD_PrintString(" BURST ");
+    line_counter++;
 }
 
 // interrupt for black line detection
 CY_ISR(cam_inter)
 {
-    int nav_period = 65536;
     double timeDiffOld_1 = timeDiff_1;
     double timeDiffOld_2 = timeDiff_2;
  
@@ -199,8 +198,10 @@ CY_ISR(cam_inter)
         else timeDiff_1 = (cam_prevTime_1 - cam_currTime_1);
         
         // check for randomness
+        
         if (timeDiff_1 > 165 || timeDiff_1 < 85) 
             timeDiff_1 = timeDiffOld_1;
+            
     }
     
     // check to make sure this is the second black line found for the frame
@@ -215,8 +216,10 @@ CY_ISR(cam_inter)
         else timeDiff_2 = (cam_prevTime_2 - cam_currTime_2);
         
         // check for randomness
+      
         if (timeDiff_2 > 165 || timeDiff_2 < 85) 
             timeDiff_2 = timeDiffOld_2;
+     
     }
     /*
       cam_testCurr = Nav_Timer_ReadCounter();
@@ -258,7 +261,6 @@ CY_ISR(frame_inter)
         LCD_Position(0,0);
         sprintf(timeString, "time diff 1: %f", timeDiff_1);
         LCD_PrintString(timeString); 
-        frame_counter = 0;
         
         LCD_Position(1,0);
         sprintf(timeString, "time diff 2: %f", timeDiff_2);
@@ -305,9 +307,9 @@ double nav_PID(void)
     double prevErr_nav = 0;
     double dt = 254;
     
-    double targetTime = 127; // want difference between two times to be zero
+    double targetTime = 0; // want difference between two times to be zero
     
-    timeDiff = timeDiff_1; //- timeDiff_2; // angle measure: time diff
+    timeDiff = timeDiff_1 - timeDiff_2; // angle measure: time diff
     
     // the error term
     currErr_nav = targetTime - timeDiff; 
@@ -362,6 +364,7 @@ void main()
     
     //start nav timer
     Nav_Timer_Start();
+    nav_period = Nav_Timer_ReadPeriod();
         
     // start DAC
     Comp_Ref_DAC_1_Start();
