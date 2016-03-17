@@ -39,17 +39,22 @@ double speed_PID(void);
 
 int line_counter = 0; // line counter
 int frame_counter = 0; // frame counter
-int modLine = 20; // read once every 10 lines
-double cam_prevTime = 0; // start time @ line read
-double cam_currTime = 0; // stop time @ black line detected
-double timeDiff = 0; // delta t
+int sampleLine_1 = 20; // read the 20th line of the frame
+int sampleLine_2 = 180; // read the 200th line of the frame 
+double cam_prevTime_1 = 0; // start time @ line read
+double cam_currTime_1 = 0; // stop time @ black line detected
+double timeDiff_1 = 0; // delta t 1
+double cam_prevTime_2 = 0; // start time @ line read
+double cam_currTime_2 = 0; // stop time @ black line detected
+double timeDiff_2 = 0; // delta t 2
+double timeDiff = 0; // time diff between two samples
 double AvgTimeDiff = 0; // average delta t
 double diff; // for testing
 double cam_testCurr = 0; // for testing
 double cam_testPrev = 0; // for testing
-const double Kp_nav = 0.001; // proportional constant 0.001
+const double Kp_nav = 0.01; // proportional constant 0.001
 const double Ki_nav = 0.01; // integral constant 0.0 or 0.01
-const double Kd_nav = 0.0; // derivative constant 0.01 or 0.0
+const double Kd_nav = 0.01; // derivative constant 0.01 or 0.0
 int lineFlag = 0; // determines if a black line has been found already for a given line
 int index; //keeps track of the index in the moving average window
 
@@ -144,9 +149,9 @@ CY_ISR(burst_inter)
     int nav_period = 65536;
     
     // every modLine lines, read the comparator
-    if (line_counter == modLine)
+    if (line_counter == sampleLine_1)
     {
-        cam_prevTime = Nav_Timer_ReadCounter();
+        cam_prevTime_1 = Nav_Timer_ReadCounter();
         lineFlag = 1;
         
         /*cam_testCurr = Nav_Timer_ReadCounter();
@@ -155,11 +160,17 @@ CY_ISR(burst_inter)
     
         else diff = (cam_testPrev - cam_testCurr);
             cam_testPrev = cam_testCurr;
-        */
-        
-        line_counter = 0;
+        */ 
     }
-    else line_counter++; 
+    
+    if (line_counter == sampleLine_2)
+    {    
+        cam_prevTime_2 = Nav_Timer_ReadCounter();
+        //line_counter = 0;
+        lineFlag = 2;
+    }
+    
+    line_counter++; 
 }
 
 // interrupt for beginning of line
@@ -173,22 +184,39 @@ CY_ISR(line_inter)
 CY_ISR(cam_inter)
 {
     int nav_period = 65536;
-    double timeDiffOld = timeDiff;
+    double timeDiffOld_1 = timeDiff_1;
+    double timeDiffOld_2 = timeDiff_2;
  
     // check to make sure this is the first black line found for the frame
     if (lineFlag == 1)
     {
-        cam_currTime = Nav_Timer_ReadCounter();
+        cam_currTime_1 = Nav_Timer_ReadCounter();
         lineFlag = 0;
         
-        if (cam_prevTime < cam_currTime) // overflow of the timer period has occured
-            timeDiff = cam_prevTime + (nav_period - cam_currTime);
+        if (cam_prevTime_1 < cam_currTime_1) // overflow of the timer period has occured
+            timeDiff_1 = cam_prevTime_1 + (nav_period - cam_currTime_1);
         
-        else timeDiff = (cam_prevTime - cam_currTime);
+        else timeDiff_1 = (cam_prevTime_1 - cam_currTime_1);
         
         // check for randomness
-        if (timeDiff > 165 || timeDiff < 85) 
-            timeDiff = timeDiffOld;
+        if (timeDiff_1 > 165 || timeDiff_1 < 85) 
+            timeDiff_1 = timeDiffOld_1;
+    }
+    
+    // check to make sure this is the second black line found for the frame
+    if (lineFlag == 2)
+    {
+        cam_currTime_2 = Nav_Timer_ReadCounter();
+        lineFlag = 0;
+        
+        if (cam_prevTime_2 < cam_currTime_2) // overflow of the timer period has occured
+            timeDiff_2 = cam_prevTime_2 + (nav_period - cam_currTime_2);
+        
+        else timeDiff_2 = (cam_prevTime_2 - cam_currTime_2);
+        
+        // check for randomness
+        if (timeDiff_2 > 165 || timeDiff_2 < 85) 
+            timeDiff_2 = timeDiffOld_2;
     }
     /*
       cam_testCurr = Nav_Timer_ReadCounter();
@@ -210,6 +238,8 @@ CY_ISR(frame_inter)
     //double AvgVals[3];
     double lastVal;  
     
+    line_counter = 0;
+    
     // moving average
     /*lastVal = AvgVals[index];
     AvgVals[index] = timeDiff;
@@ -226,7 +256,12 @@ CY_ISR(frame_inter)
     if (frame_counter == 32)
     {       
         LCD_Position(0,0);
-        sprintf(timeString, "time diff: %f", timeDiff);
+        sprintf(timeString, "time diff 1: %f", timeDiff_1);
+        LCD_PrintString(timeString); 
+        frame_counter = 0;
+        
+        LCD_Position(1,0);
+        sprintf(timeString, "time diff 2: %f", timeDiff_2);
         LCD_PrintString(timeString); 
         frame_counter = 0;
     }
@@ -236,7 +271,7 @@ CY_ISR(frame_inter)
     servoVal = nav_PID();
     
     // slow down on turns
-    if (servoVal > 0.2 || servoVal < -0.2)
+    if (servoVal > 0.25 || servoVal < -0.25)
     {
         if (TargetSpeed > MinSpeed)
             TargetSpeed *= 0.975; 
@@ -267,11 +302,12 @@ double nav_PID(void)
     double iTerm_nav; // intergral term
     double dTerm_nav; // derivative term
     double intErr_nav;
-    double prevErr_nav;
+    double prevErr_nav = 0;
+    double dt = 254;
     
-    double targetTime = 127.0; // when the black line is centered in the frame ----------------------------------- 330.0
+    double targetTime = 127; // want difference between two times to be zero
     
-    //timeDiff = AvgTimeDiff;
+    timeDiff = timeDiff_1; //- timeDiff_2; // angle measure: time diff
     
     // the error term
     currErr_nav = targetTime - timeDiff; 
