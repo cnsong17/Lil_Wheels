@@ -23,15 +23,17 @@ const double Kp = 2.8; // proportional constant 0.1, 1.65
 const double Ki = 1.1; // integral constant 0.05 , 0.5
 const double Kd = 0.1; // derivative constant 0.01 , 0.01
 double currErr = 0; // the error term
-double MaxSpeed = 121.92; // max operating speed 91.44
-double MinSpeed = 61; // min operating speed 61
-double TargetSpeed = 121.92; //121.92 * (3/4); // Target speed 91.44, 61
+double MaxSpeed = 130; // max operating speed 91.44
+double MinSpeed = 70; // min operating speed 61
+double TargetSpeed = 122; //121.92 * (3/4); // Target speed 91.44, 61
 double prevErr = 0; // previous error
 double windupGuard = 0; // integral windup guard
 double pwm = 70; // the PID gain for the PWM
 double intErr; // integral error
-double totalDist = 3048; // total distance 100 feet = 3048 cm
+double totalDist = 6096; // total distance 100 feet = 3048 cm
 double distTravelled = 0; // distance travelled so far
+double AvgSpeed;
+double totalTime = 0;
 
 double speed_PID(void);
 
@@ -47,9 +49,9 @@ double AvgTimeDiff = 0; // average delta t
 double diff; // for testing
 double cam_testCurr = 0; // for testing
 double cam_testPrev = 0; // for testing
-const double Kp_nav = 0.001; // proportional constant 0.001
-const double Ki_nav = 0.01; // integral constant 0.0 or 0.01
-const double Kd_nav = 0.0; // derivative constant 0.01 or 0.0
+double Kp_nav = 0.001; // proportional constant 0.001
+const double Ki_nav = 0.0; // integral constant 0.0 or 0.01
+const double Kd_nav = 0.01; // derivative constant 0.01 or 0.0
 int lineFlag = 0; // determines if a black line has been found already for a given line
 int index; //keeps track of the index in the moving average window
 
@@ -80,6 +82,10 @@ CY_ISR(inter)
      
     prevTime = currTime;
     mag_counter++;
+    
+    //calculate avg speed
+    totalTime += timePerRev;
+    AvgSpeed = distTravelled/totalTime;
     
     // run the PID control
     pwm = speed_PID();
@@ -209,6 +215,8 @@ CY_ISR(frame_inter)
     int AvgWindow = 3; // avg every three frames
     //double AvgVals[3];
     double lastVal;  
+    int MaxKp_nav = .001;
+    int MinKp_nav = .0005;
     
     // moving average
     /*lastVal = AvgVals[index];
@@ -225,9 +233,18 @@ CY_ISR(frame_inter)
         
     if (frame_counter == 32)
     {       
-        LCD_Position(0,0);
+        /*LCD_Position(0,0);
         sprintf(timeString, "time diff: %f", timeDiff);
-        LCD_PrintString(timeString); 
+        LCD_PrintString(timeString); */
+        
+        LCD_Position(0,0);    
+        sprintf(timeString, "speed: %f", TargetSpeed);
+        LCD_PrintString(timeString);
+        
+        LCD_Position(1,0);
+        sprintf(timeString, "avg speed: %f", AvgSpeed);
+        LCD_PrintString(timeString);  
+    
         frame_counter = 0;
     }
     
@@ -239,22 +256,44 @@ CY_ISR(frame_inter)
     if (servoVal > 0.2 || servoVal < -0.2)
     {
         if (TargetSpeed > MinSpeed)
-            TargetSpeed *= 0.975; 
+            TargetSpeed *= 0.975;
         else TargetSpeed = MinSpeed;
     }
+    
+    // speed up on straight lines
     else 
-    {
+    {     
         if (TargetSpeed < MaxSpeed)
-            TargetSpeed *= 1.01; 
+            TargetSpeed *= 1.01;
         else TargetSpeed = MaxSpeed;
     }
+    
+    // adjust Kp values with speed
+    //turn
+    /*if (servoVal > 0.1 || servoVal < -0.1) {
+        if (TargetSpeed > MinSpeed) {    
+            if (Kp_nav < MaxKp_nav)
+                Kp_nav *= 1.01; 
+            else Kp_nav = MaxKp_nav;
+        }
+    }    
+        //straight
+    else {
+        if (TargetSpeed < MaxSpeed){
+            if (Kp_nav > MinKp_nav)
+                Kp_nav *= 0.90;
+            else Kp_nav = MinKp_nav;
+        }   
+    }*/
+
+    //if (TargetSpeed > 
     
     // boundary conditions for servo
     if (servoVal > 0.47)
         servoVal = 0.47;
     if (servoVal < -0.43)
         servoVal = -0.43;
-    
+        
     Steering_PWM_WriteCompare((1.52 - servoVal)*4800);
 }
 
@@ -270,6 +309,7 @@ double nav_PID(void)
     double prevErr_nav;
     
     double targetTime = 127.0; // when the black line is centered in the frame ----------------------------------- 330.0
+    double dt = 254;
     
     //timeDiff = AvgTimeDiff;
     
@@ -277,10 +317,10 @@ double nav_PID(void)
     currErr_nav = targetTime - timeDiff; 
     
     // integral response 
-    intErr_nav += currErr_nav;
+    intErr_nav += currErr_nav * dt;
 
     // differential
-    diffErr_nav = currErr_nav - prevErr_nav;
+    diffErr_nav = (currErr_nav - prevErr_nav)/dt;
     
     // scaling
     pTerm_nav = Kp_nav*currErr_nav; // proportional response
